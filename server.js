@@ -5,69 +5,68 @@ const youtubedl = require('youtube-dl-exec');
 const app = express();
 
 app.use(cors());
-// Servimos la carpeta public donde está tu index.html
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Cambié /download a /api/download para que coincida con tu HTML
 app.get('/api/download', async (req, res) => {
     let videoURL = req.query.url;
     if (!videoURL) return res.status(400).send('Falta la URL');
 
-    // Limpiar links de listas de reproducción
     if (videoURL.includes('&list=')) {
         videoURL = videoURL.split('&list=')[0];
     }
 
     try {
-        console.log(`>>> Procesando para el grupo: ${videoURL}`);
+        console.log(`>>> Solicitud para: ${videoURL}`);
 
-        // 1. Obtener metadatos (Título real)
+        // 1. Obtener metadatos con User-Agent Real
         const info = await youtubedl(videoURL, {
             dumpSingleJson: true,
             noCheckCertificates: true,
             noWarnings: true,
-            preferFreeFormats: true,
-            addHeader: ['referer:youtube.com', 'user-agent:googlebot']
+            addHeader: [
+                'referer:youtube.com',
+                'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+            ]
         });
 
-        // Limpiar el título de caracteres raros que rompen Windows/Android
         const cleanTitle = info.title.replace(/[\\\/:*?"<>|]/g, "").substring(0, 50);
         
-        // 2. Configurar las cabeceras para que el navegador inicie la descarga
         res.header('Content-Type', 'audio/mpeg');
         res.header('Content-Disposition', `attachment; filename="${cleanTitle}.mp3"`);
 
-        // 3. Ejecutar la extracción de audio en streaming
+        // 2. Extracción de audio con streaming directo
         const subprocess = youtubedl.exec(videoURL, {
             extractAudio: true,
             audioFormat: 'mp3',
-            output: '-', // Esto envía los datos directamente al navegador
+            output: '-', 
             noCheckCertificates: true,
-            addHeader: ['referer:youtube.com', 'user-agent:googlebot']
+            // Banderas extra para evitar bloqueos en la nube
+            geoBypass: true,
+            addHeader: [
+                'referer:https://www.youtube.com/',
+                'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+            ]
         });
 
-        // Tubería de datos: del proceso de descarga directo al navegador del amigo
+        // Tubería: YouTube -> Render -> Amigos
         subprocess.stdout.pipe(res);
 
-        // Manejo de cierre de conexión
         subprocess.on('close', (code) => {
-            if (code === 0) console.log(`✅ "${cleanTitle}" enviada con éxito.`);
+            if (code === 0) console.log(`✅ "${cleanTitle}" enviada.`);
         });
 
-        // Si el usuario cierra la pestaña o cancela, matamos el proceso para no gastar RAM
+        // Matar proceso si el usuario cancela para no saturar Render
         req.on('close', () => {
             if (!subprocess.killed) subprocess.kill();
         });
 
     } catch (err) {
-        console.error('Error detallado:', err);
-        // Si hay error, enviamos un mensaje claro pero sin tumbar el server
+        console.error('Error en el motor:', err);
         if (!res.headersSent) {
-            res.status(500).send('Error en el motor: El link podría estar protegido o caído.');
+            res.status(500).send('Error en el motor: YouTube bloqueó la conexión. Intenta con otro link.');
         }
     }
 });
 
-// Usamos process.env.PORT para que funcione en Render/Railway automáticamente
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ MPP2: Motor listo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`✅ MPP2: Motor de alta fidelidad activo en puerto ${PORT}`));
